@@ -88,6 +88,9 @@
     .detail-table tr:hover td { background:var(--bg3); }
     .mono { font-family:monospace; font-size:12px; }
     .sh { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); margin:16px 0 6px; }
+    /* Detail panel rows: label + value left-aligned, not spread across full width */
+    .detail-wrap .stat-row { justify-content:flex-start; gap:16px; }
+    .detail-wrap .stat-row .stat-label { min-width:90px; flex-shrink:0; }
 
 
     /* ── Validation badge ── */
