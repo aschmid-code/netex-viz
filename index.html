@@ -119,6 +119,37 @@
     [data-theme="dark"] .val-summary.ok  { background:rgba(102,187,106,.12); color:#66bb6a; }
     [data-theme="dark"] .val-summary.err { background:rgba(239,83,80,.1);    color:#ef5350; }
 
+    /* ── Quality panel ── */
+    .qa-tab-badge { display:inline-block; min-width:16px; height:16px; line-height:16px; text-align:center; border-radius:8px; font-size:10px; font-weight:700; margin-left:2px; padding:0 4px; }
+    .qa-tab-badge.err  { background:#c62828; color:#fff; }
+    .qa-tab-badge.warn { background:#e65100; color:#fff; }
+    .qa-tab-badge.ok   { background:#2e7d32; color:#fff; }
+    .qa-tab-badge.empty { display:none; }
+    .qa-summary { display:flex; gap:12px; margin-bottom:18px; flex-wrap:wrap; }
+    .qa-card { flex:1; min-width:120px; padding:14px 16px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); }
+    .qa-card-num { font-size:28px; font-weight:700; line-height:1; }
+    .qa-card-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-top:6px; }
+    .qa-card.err  .qa-card-num { color:#c62828; }
+    .qa-card.warn .qa-card-num { color:#e65100; }
+    .qa-card.ok   .qa-card-num { color:#2e7d32; }
+    [data-theme="dark"] .qa-card.err  .qa-card-num { color:#ef5350; }
+    [data-theme="dark"] .qa-card.warn .qa-card-num { color:#ffa726; }
+    [data-theme="dark"] .qa-card.ok   .qa-card-num { color:#66bb6a; }
+    .qa-group { margin-bottom:8px; }
+    .qa-item { padding:10px 12px; border-radius:6px; margin-bottom:6px; font-size:12px; display:flex; gap:10px; align-items:flex-start; }
+    .qa-item.err  { background:rgba(198,40,40,.07);  border-left:3px solid #c62828; }
+    .qa-item.warn { background:rgba(230,81,0,.07);   border-left:3px solid #e65100; }
+    .qa-item.info { background:rgba(25,118,210,.06); border-left:3px solid #1976d2; }
+    [data-theme="dark"] .qa-item.err  { background:rgba(239,83,80,.08); border-left-color:#ef5350; }
+    [data-theme="dark"] .qa-item.warn { background:rgba(255,167,38,.08); border-left-color:#ffa726; }
+    [data-theme="dark"] .qa-item.info { background:rgba(66,165,245,.08); border-left-color:#42a5f5; }
+    .qa-icon { font-size:14px; flex-shrink:0; }
+    .qa-body { flex:1; }
+    .qa-msg { color:var(--text); line-height:1.5; }
+    .qa-ctx { font-family:monospace; font-size:11px; color:var(--muted); margin-top:3px; }
+    .qa-check-ok { padding:10px 12px; border-radius:6px; margin-bottom:6px; font-size:12px; background:rgba(46,125,50,.07); border-left:3px solid #2e7d32; color:var(--muted); display:flex; gap:10px; align-items:center; }
+    [data-theme="dark"] .qa-check-ok { background:rgba(102,187,106,.07); border-left-color:#66bb6a; }
+
     /* ── Drop overlay ── */
     .drop-overlay { display:none; position:fixed; inset:0; background:rgba(92,107,192,.12); border:2px dashed var(--accent); z-index:9999; align-items:center; justify-content:center; font-size:20px; color:var(--accent); backdrop-filter:blur(2px); }
     .drop-overlay.active { display:flex; }
@@ -166,10 +197,12 @@
       <div class="tab active" onclick="showTab('map')">🗺 Karte</div>
       <div class="tab" onclick="showTab('marey')">📊 Fahrplan</div>
       <div class="tab" onclick="showTab('detail')">📋 Details</div>
+      <div class="tab" onclick="showTab('quality')">🔍 Prüfung <span id="qa-tab-badge" class="qa-tab-badge"></span></div>
     </div>
     <div class="map-wrap" id="tab-map"><div id="map"></div></div>
     <div class="marey-wrap hidden" id="tab-marey"><div id="marey-container"><div class="empty">Datei laden</div></div></div>
     <div class="detail-wrap hidden" id="tab-detail"><div class="empty">Fahrt in der Liste wählen</div></div>
+    <div class="detail-wrap hidden" id="tab-quality"><div class="empty">Datei laden für Datenprüfung</div></div>
   </div>
 </div>
 
@@ -345,8 +378,206 @@ function parseJourneys(doc, stops) {
 }
 
 // ════════════════════════════════════════════════════════
-//  State & Map init
+//  Datenqualitäts-Prüfung (über XSD hinaus)
 // ════════════════════════════════════════════════════════
+
+// Haversine-Distanz in km
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2-lat1) * Math.PI/180;
+  const dLon = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function timeToMinutes(t) {
+  if (!t) return null;
+  const [h,m,s] = t.split(':').map(Number);
+  return h*60 + m + (s||0)/60;
+}
+
+// Plausible Höchstgeschwindigkeit pro Modus (km/h)
+const MAX_SPEED = { rail:300, train:300, bus:120, tram:80, metro:100, water:80, default:300 };
+
+function runQualityChecks(data) {
+  const { stops, lines, journeys } = data;
+  const issues = [];   // {level:'err'|'warn'|'info', cat, msg, ctx}
+  const passed = [];   // text strings
+
+  // Schweiz-Bounding-Box (grosszügig inkl. Grenzregionen)
+  const CH = { latMin:45.5, latMax:48.0, lonMin:5.5, lonMax:11.0 };
+
+  // ── 1. Haltestellen ohne Koordinaten ──
+  const noCoord = Object.values(stops).filter(s => !s.lat || !s.lon);
+  if (noCoord.length) {
+    noCoord.forEach(s => issues.push({
+      level:'warn', cat:'Koordinaten',
+      msg:`Haltestelle ohne Koordinaten: ${s.name}`,
+      ctx:s.id,
+    }));
+  } else {
+    passed.push('Alle Haltestellen haben Koordinaten');
+  }
+
+  // ── 2. Koordinaten ausserhalb Schweiz ──
+  let outsideCH = 0;
+  Object.values(stops).forEach(s => {
+    if (s.lat && s.lon) {
+      if (s.lat < CH.latMin || s.lat > CH.latMax || s.lon < CH.lonMin || s.lon > CH.lonMax) {
+        issues.push({
+          level:'warn', cat:'Geografie',
+          msg:`Koordinaten ausserhalb CH-Region: ${s.name}`,
+          ctx:`${s.lat.toFixed(5)}, ${s.lon.toFixed(5)} — ${s.id}`,
+        });
+        outsideCH++;
+      }
+    }
+  });
+  if (!outsideCH && Object.values(stops).some(s=>s.lat)) {
+    passed.push('Alle Koordinaten innerhalb der CH-Region');
+  }
+
+  // ── 3. Pro Fahrt: Geschwindigkeit & Zeit-Monotonie ──
+  let speedOK = true, timeOK = true;
+  journeys.forEach(j => {
+    const line = j.lineRef ? lines[j.lineRef] : null;
+    const mode = (line?.mode || 'default').toLowerCase();
+    const maxSpeed = MAX_SPEED[mode] || MAX_SPEED.default;
+    const pts = j.passingTimes;
+    const jName = j.name || j.id;
+
+    let lastTime = null;
+    for (let i=0; i<pts.length; i++) {
+      const p = pts[i];
+      const t = timeToMinutes(p.arrival || p.departure);
+
+      // Zeit-Monotonie
+      if (t !== null && lastTime !== null && t < lastTime) {
+        issues.push({
+          level:'err', cat:'Zeitfolge',
+          msg:`Zeit läuft rückwärts bei ${p.stopName} (Fahrt ${jName})`,
+          ctx:`${formatMin(lastTime)} → ${formatMin(t)}`,
+        });
+        timeOK = false;
+      }
+      if (t !== null) lastTime = Math.max(lastTime ?? t, t);
+
+      // Geschwindigkeit zum Vorgänger
+      if (i > 0) {
+        const prev = pts[i-1];
+        if (prev.lat && prev.lon && p.lat && p.lon) {
+          const dist = haversineKm(prev.lat, prev.lon, p.lat, p.lon);
+          const tPrev = timeToMinutes(prev.departure || prev.arrival);
+          const tCur  = timeToMinutes(p.arrival || p.departure);
+          if (tPrev !== null && tCur !== null && tCur > tPrev) {
+            const hours = (tCur - tPrev) / 60;
+            const speed = dist / hours;
+            if (speed > maxSpeed) {
+              issues.push({
+                level:'err', cat:'Geschwindigkeit',
+                msg:`Unplausible Geschwindigkeit ${prev.stopName} → ${p.stopName}: ${Math.round(speed)} km/h (max ${maxSpeed} für ${mode})`,
+                ctx:`${dist.toFixed(1)} km in ${Math.round((tCur-tPrev))} min — Fahrt ${jName}`,
+              });
+              speedOK = false;
+            }
+          }
+        }
+      }
+    }
+  });
+  if (speedOK && journeys.length) passed.push('Alle Segment-Geschwindigkeiten plausibel');
+  if (timeOK  && journeys.length) passed.push('Alle Fahrzeiten monoton steigend');
+
+  // ── 3b. Umweg-Check: erkennt falsch platzierte Koordinaten ──
+  // Wenn eine Haltestelle einen grossen geografischen Umweg verursacht,
+  // ist ihre Koordinate vermutlich falsch (Winterthur-Fall).
+  let detourOK = true;
+  journeys.forEach(j => {
+    const pts = j.passingTimes.filter(p => p.lat && p.lon);
+    for (let i=1; i<pts.length-1; i++) {
+      const prev = pts[i-1], cur = pts[i], next = pts[i+1];
+      const viaCur = haversineKm(prev.lat,prev.lon,cur.lat,cur.lon)
+                   + haversineKm(cur.lat,cur.lon,next.lat,next.lon);
+      const direct = haversineKm(prev.lat,prev.lon,next.lat,next.lon);
+      if (direct > 1) {
+        const detour = viaCur / direct;
+        if (detour > 2.5) {
+          issues.push({
+            level:'warn', cat:'Geografie',
+            msg:`Grosser Umweg über ${cur.stopName} — Koordinate evtl. falsch`,
+            ctx:`Umweg-Faktor ${detour.toFixed(1)}× (${viaCur.toFixed(0)} km statt ${direct.toFixed(0)} km direkt) — ${cur.stopRef}`,
+          });
+          detourOK = false;
+        }
+      }
+    }
+  });
+  if (detourOK && journeys.length) passed.push('Keine geografischen Ausreisser in den Routen');
+
+  // ── 4. Referenz-Integrität: jede StopRef muss auf bekannten Stop zeigen ──
+  let refOK = true;
+  journeys.forEach(j => {
+    j.passingTimes.forEach(p => {
+      if (p.stopRef && !stops[p.stopRef]) {
+        issues.push({
+          level:'err', cat:'Referenzen',
+          msg:`PassingTime verweist auf unbekannte Haltestelle`,
+          ctx:`${p.stopRef} — Fahrt ${j.name||j.id}`,
+        });
+        refOK = false;
+      }
+    });
+    if (j.lineRef && !lines[j.lineRef]) {
+      issues.push({
+        level:'warn', cat:'Referenzen',
+        msg:`Fahrt verweist auf unbekannte Linie`,
+        ctx:`${j.lineRef} — Fahrt ${j.name||j.id}`,
+      });
+      refOK = false;
+    }
+  });
+  if (refOK && journeys.length) passed.push('Alle Referenzen konsistent mit deklarierten IDs');
+
+  // ── 5. Fahrten ohne Zeitangaben ──
+  journeys.forEach(j => {
+    const withTime = j.passingTimes.filter(p => p.arrival || p.departure).length;
+    if (withTime === 0) {
+      issues.push({
+        level:'warn', cat:'Zeiten',
+        msg:`Fahrt ohne jegliche Zeitangaben: ${j.name||j.id}`,
+        ctx:`${j.passingTimes.length} Haltepunkte, 0 mit Zeit`,
+      });
+    }
+  });
+
+  // ── 6. Duplikate: zwei Stops mit identischen Koordinaten ──
+  const coordMap = {};
+  Object.values(stops).forEach(s => {
+    if (s.lat && s.lon) {
+      const key = s.lat.toFixed(5)+','+s.lon.toFixed(5);
+      (coordMap[key] = coordMap[key] || []).push(s);
+    }
+  });
+  Object.values(coordMap).forEach(group => {
+    if (group.length > 1) {
+      issues.push({
+        level:'info', cat:'Duplikate',
+        msg:`${group.length} Haltestellen mit identischen Koordinaten`,
+        ctx:group.map(s=>s.name).join(', '),
+      });
+    }
+  });
+
+  return { issues, passed };
+}
+
+function formatMin(m) {
+  const h = Math.floor(m/60), mm = Math.round(m%60);
+  return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+}
+
+
 let parsedData = null, activeJourney = null;
 let lineLayer, stopLayer, tileLayers = {};
 
@@ -423,6 +654,7 @@ function renderAll(filename) {
   renderJourneyList(journeys, lines);
   renderMap(stops, journeys);
   renderMarey(stops, journeys);
+  renderQuality(parsedData);
   if (journeys.length) selectJourney(0);
 }
 
@@ -640,11 +872,80 @@ function renderDetail(j) {
     </table>`;
 }
 
+// ── Quality panel render ─────────────────────────────────
+function renderQuality(data) {
+  const { issues, passed } = runQualityChecks(data);
+  const el = document.getElementById('tab-quality');
+
+  const errs  = issues.filter(i => i.level === 'err');
+  const warns = issues.filter(i => i.level === 'warn');
+  const infos = issues.filter(i => i.level === 'info');
+
+  // Tab badge
+  const badge = document.getElementById('qa-tab-badge');
+  if (errs.length) { badge.className = 'qa-tab-badge err';  badge.textContent = errs.length; }
+  else if (warns.length) { badge.className = 'qa-tab-badge warn'; badge.textContent = warns.length; }
+  else { badge.className = 'qa-tab-badge ok'; badge.textContent = '✓'; }
+
+  // Summary cards
+  const cards = `
+    <div class="qa-summary">
+      <div class="qa-card ${errs.length?'err':'ok'}">
+        <div class="qa-card-num">${errs.length}</div>
+        <div class="qa-card-label">Fehler</div>
+      </div>
+      <div class="qa-card ${warns.length?'warn':'ok'}">
+        <div class="qa-card-num">${warns.length}</div>
+        <div class="qa-card-label">Warnungen</div>
+      </div>
+      <div class="qa-card">
+        <div class="qa-card-num" style="color:var(--muted)">${infos.length}</div>
+        <div class="qa-card-label">Hinweise</div>
+      </div>
+      <div class="qa-card ok">
+        <div class="qa-card-num">${passed.length}</div>
+        <div class="qa-card-label">Bestanden</div>
+      </div>
+    </div>`;
+
+  const iconFor = l => l==='err'?'❌':l==='warn'?'⚠️':'ℹ️';
+  const renderItems = arr => arr.map(i => `
+    <div class="qa-item ${i.level}">
+      <span class="qa-icon">${iconFor(i.level)}</span>
+      <div class="qa-body">
+        <div class="qa-msg"><b>${i.cat}:</b> ${escHtml(i.msg)}</div>
+        ${i.ctx ? `<div class="qa-ctx">${escHtml(i.ctx)}</div>` : ''}
+      </div>
+    </div>`).join('');
+
+  let body = cards;
+
+  if (issues.length === 0) {
+    body += `<div class="sh">Plausibilitätsprüfung</div>`;
+  } else {
+    body += `<div class="sh">Gefundene Probleme</div>`;
+    if (errs.length)  body += renderItems(errs);
+    if (warns.length) body += renderItems(warns);
+    if (infos.length) body += renderItems(infos);
+    body += `<div class="sh" style="margin-top:18px">Bestandene Prüfungen</div>`;
+  }
+
+  body += passed.map(p => `
+    <div class="qa-check-ok"><span class="qa-icon">✅</span>${escHtml(p)}</div>`).join('');
+
+  body += `<div class="qa-ctx" style="margin-top:16px;padding:0 2px">
+    Diese Prüfungen gehen über die XSD-Validierung hinaus und testen inhaltliche Plausibilität
+    (Geschwindigkeiten, Zeitfolgen, Referenz-Integrität, Geografie).
+  </div>`;
+
+  el.innerHTML = body;
+}
+
 // ════════════════════════════════════════════════════════
 //  Tabs
 // ════════════════════════════════════════════════════════
 function showTab(name) {
-  ['map','marey','detail'].forEach((t,i) => {
+  ['map','marey','detail','quality'].forEach((t,i) => {
     document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
     document.querySelectorAll('.tab')[i].classList.toggle('active', t===name);
   });
