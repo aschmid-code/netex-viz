@@ -376,7 +376,7 @@ function renderJourneyList(journeys, lines) {
     const to   = pts[pts.length-1]?.stopName || '?';
     const dep  = pts[0]?.departure || pts[0]?.arrival || '';
     return `<div class="ji" id="ji-${i}" onclick="selectJourney(${i})">
-      <div class="ji-name"><span class="mode-pill ${modeClass(line?.mode)}">${modeLabel(line?.mode)}</span>${j.name||j.id.split(':').pop()}</div>
+      <div class="ji-name"><span class="mode-pill ${modeClass(line?.mode)}">${modeLabel(line?.mode)}</span>${j.name||j.id}</div>
       <div class="ji-meta">${from} → ${to}${dep?' | ab '+dep:''}</div>
     </div>`;
   }).join('');
@@ -408,7 +408,7 @@ function renderMap(stops, journeys) {
         color:   JOURNEY_COLORS[ji % JOURNEY_COLORS.length],
         weight:  4,
         opacity: 0.75,
-      }).bindTooltip(j.name || j.id.split(':').pop(), {sticky:true}).addTo(lineLayer);
+      }).bindTooltip(j.name || j.id, {sticky:true}).addTo(lineLayer);
     }
   });
 
@@ -441,7 +441,7 @@ function highlightJourney(j) {
       color:   active ? '#e53935' : JOURNEY_COLORS[ji % JOURNEY_COLORS.length],
       weight:  active ? 6 : 3,
       opacity: active ? 1 : 0.3,
-    }).bindTooltip(jj.name||jj.id.split(':').pop(), {sticky:true}).addTo(lineLayer);
+    }).bindTooltip(jj.name||jj.id, {sticky:true}).addTo(lineLayer);
   });
 }
 
@@ -516,7 +516,7 @@ function renderMarey(stops, journeys) {
   journeys.forEach((j,ji) => {
     const x     = margin.left + ji*colW + colW/2;
     const color = JOURNEY_COLORS[ji % JOURNEY_COLORS.length];
-    const label = (j.name||j.id.split(':').pop()).slice(0,10);
+    const label = (j.name||j.id).slice(0,10);
     svg.append('text').attr('x',x).attr('y',margin.top-10)
       .attr('text-anchor','middle').attr('fill',color)
       .attr('font-size',11).attr('font-weight','600').attr('font-family','system-ui,sans-serif')
