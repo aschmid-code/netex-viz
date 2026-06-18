@@ -119,6 +119,29 @@
     [data-theme="dark"] .val-summary.ok  { background:rgba(102,187,106,.12); color:#66bb6a; }
     [data-theme="dark"] .val-summary.err { background:rgba(239,83,80,.1);    color:#ef5350; }
 
+    /* ── XML viewer ── */
+    .xml-wrap { flex:1; overflow:auto; display:flex; flex-direction:column; }
+    .xml-wrap.hidden { display:none; }
+    .xml-toolbar { padding:8px 14px; border-bottom:1px solid var(--border); display:flex; gap:8px; align-items:center; flex-shrink:0; background:var(--bg2); }
+    .xml-search { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:5px 10px; border-radius:6px; font-size:12px; width:200px; }
+    .xml-code { flex:1; overflow:auto; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:12px; line-height:1.55; padding:8px 0; }
+    .xml-line { display:flex; padding:0 14px; white-space:pre; }
+    .xml-line:hover { background:var(--bg3); }
+    .xml-line.highlight { background:rgba(230,81,0,.15); }
+    [data-theme="dark"] .xml-line.highlight { background:rgba(255,167,38,.18); }
+    .xml-lineno { color:var(--muted); user-select:none; text-align:right; min-width:42px; padding-right:14px; flex-shrink:0; opacity:.6; }
+    .xml-content { flex:1; }
+    .xml-tag    { color:#1976d2; }
+    .xml-attr   { color:#e65100; }
+    .xml-val    { color:#2e7d32; }
+    .xml-text   { color:var(--text); }
+    [data-theme="dark"] .xml-tag  { color:#90caf9; }
+    [data-theme="dark"] .xml-attr { color:#ffb74d; }
+    [data-theme="dark"] .xml-val  { color:#a5d6a7; }
+    .err-row.clickable { cursor:pointer; }
+    .err-row.clickable:hover { background:rgba(198,40,40,.14); }
+    [data-theme="dark"] .err-row.clickable:hover { background:rgba(239,83,80,.16); }
+
     /* ── Quality panel ── */
     .qa-tab-badge { display:inline-block; min-width:16px; height:16px; line-height:16px; text-align:center; border-radius:8px; font-size:10px; font-weight:700; margin-left:2px; padding:0 4px; }
     .qa-tab-badge.err  { background:#c62828; color:#fff; }
@@ -198,11 +221,13 @@
       <div class="tab" onclick="showTab('marey')">📊 Fahrplan</div>
       <div class="tab" onclick="showTab('detail')">📋 Details</div>
       <div class="tab" onclick="showTab('quality')">🔍 Prüfung <span id="qa-tab-badge" class="qa-tab-badge"></span></div>
+      <div class="tab" onclick="showTab('xml')">📄 XML</div>
     </div>
     <div class="map-wrap" id="tab-map"><div id="map"></div></div>
     <div class="marey-wrap hidden" id="tab-marey"><div id="marey-container"><div class="empty">Datei laden</div></div></div>
     <div class="detail-wrap hidden" id="tab-detail"><div class="empty">Fahrt in der Liste wählen</div></div>
     <div class="detail-wrap hidden" id="tab-quality"><div class="empty">Datei laden für Datenprüfung</div></div>
+    <div class="xml-wrap hidden" id="tab-xml"><div class="empty">Datei laden um XML anzuzeigen</div></div>
   </div>
 </div>
 
@@ -579,6 +604,8 @@ function formatMin(m) {
 
 
 let parsedData = null, activeJourney = null;
+let rawXML = '';
+let stopMarkers = {};
 let lineLayer, stopLayer, tileLayers = {};
 
 const map = L.map('map').setView([46.8, 8.2], 8);
@@ -633,8 +660,10 @@ function loadLocalFile(input) {
 
 function processXML(xml, filename) {
   try {
+    rawXML = xml;
     parsedData = parseNeTEx(xml);
     renderAll(filename);
+    renderXMLViewer(xml);
     validateXML(xml, filename);
     setStatus(filename + ' — ' + parsedData.journeys.length + ' Fahrten');
   } catch(e) {
@@ -719,20 +748,70 @@ function renderMap(stops, journeys) {
   // Draw stops — deduplicated by lat/lon
   const bounds = [];
   const drawn  = new Set();
+  stopMarkers = {};
   Object.values(stops).forEach(s => {
     if (!s.lat || !s.lon) return;
     const key = s.lat.toFixed(5) + ',' + s.lon.toFixed(5);
     if (drawn.has(key)) return;
     drawn.add(key);
     bounds.push([s.lat, s.lon]);
-    L.circleMarker([s.lat, s.lon], {
+    const marker = L.circleMarker([s.lat, s.lon], {
       radius:8, fillColor:'#fff', color:'#1976d2',
       weight:2.5, fillOpacity:1,
     }).bindPopup(`<b>${s.name}</b><br><span style="font-family:monospace;font-size:11px">${s.id}</span>`)
+      .on('click', () => highlightStop(s.id))
       .addTo(stopLayer);
+    stopMarkers[s.id] = marker;
   });
 
   if (bounds.length) map.fitBounds(bounds, {padding:[40,40]});
+}
+
+// ── Cross-view highlight: Haltestelle in allen Ansichten markieren ──
+let highlightedStop = null;
+function highlightStop(stopId) {
+  highlightedStop = stopId;
+
+  // 1. Map: alle Marker zurücksetzen, gewählten hervorheben
+  Object.entries(stopMarkers).forEach(([id, m]) => {
+    const active = id === stopId;
+    m.setStyle({
+      radius:      active ? 11 : 8,
+      fillColor:   active ? '#f57c00' : '#fff',
+      color:       active ? '#e65100' : '#1976d2',
+      weight:      active ? 3 : 2.5,
+    });
+    if (active) m.bringToFront();
+  });
+
+  // 2. Marey: Punkte dieser Haltestelle hervorheben
+  document.querySelectorAll('#marey-container circle').forEach(c => {
+    const cid = c.getAttribute('data-stop');
+    if (cid === stopId) {
+      c.setAttribute('r', '8');
+      c.setAttribute('stroke', '#e65100');
+      c.setAttribute('stroke-width', '2.5');
+    } else if (cid) {
+      c.setAttribute('r', '5');
+    }
+  });
+  // Marey-Zeilenlabel hervorheben
+  document.querySelectorAll('#marey-container text[data-stoplabel]').forEach(t => {
+    t.setAttribute('font-weight', t.getAttribute('data-stoplabel') === stopId ? '700' : '400');
+    t.setAttribute('fill', t.getAttribute('data-stoplabel') === stopId
+      ? (darkMode ? '#ffb74d' : '#e65100')
+      : (darkMode ? '#7986cb' : '#5c6380'));
+  });
+
+  // 3. Detail: passende Zeile hervorheben
+  document.querySelectorAll('#tab-detail tr[data-stop]').forEach(tr => {
+    tr.style.background = tr.getAttribute('data-stop') === stopId
+      ? 'rgba(245,124,0,.15)' : '';
+  });
+
+  // Status-Hinweis
+  const stop = parsedData?.stops[stopId];
+  if (stop) setStatus('Haltestelle markiert: ' + stop.name);
 }
 
 function highlightJourney(j) {
@@ -804,6 +883,9 @@ function renderMarey(stops, journeys) {
       .attr('x',margin.left-8).attr('y',margin.top+i*rowH+rowH/2)
       .attr('text-anchor','end').attr('dominant-baseline','central')
       .attr('fill',labelCol).attr('font-size',12).attr('font-family','system-ui,sans-serif')
+      .attr('data-stoplabel', s.id)
+      .style('cursor','pointer')
+      .on('click', () => highlightStop(s.id))
       .text(label);
   });
 
@@ -831,7 +913,7 @@ function renderMarey(stops, journeys) {
       if (si===undefined) return null;
       const t = timeToMin(pt.departure||pt.arrival);
       if (t===null) return null;
-      return {x, y:margin.top+si*rowH+rowH/2, time:pt.departure||pt.arrival};
+      return {x, y:margin.top+si*rowH+rowH/2, time:pt.departure||pt.arrival, stopRef:pt.stopRef};
     }).filter(Boolean);
 
     if (pts.length>1)
@@ -841,6 +923,9 @@ function renderMarey(stops, journeys) {
     pts.forEach(p => {
       svg.append('circle').attr('cx',p.x).attr('cy',p.y).attr('r',5)
         .attr('fill',dotFill).attr('stroke',dotStroke).attr('stroke-width',1.5)
+        .attr('data-stop', p.stopRef)
+        .style('cursor','pointer')
+        .on('click', () => highlightStop(p.stopRef))
         .append('title').text(p.time);
     });
   });
@@ -855,7 +940,7 @@ function renderDetail(j) {
   if (!j) { el.innerHTML='<div class="empty">Fahrt wählen</div>'; return; }
   const line = j.lineRef ? parsedData.lines[j.lineRef] : null;
   const rows = j.passingTimes.map((pt,i) => `
-    <tr><td>${i+1}</td><td>${pt.stopName}</td>
+    <tr data-stop="${pt.stopRef}" style="cursor:pointer" onclick="highlightStop('${pt.stopRef}')"><td>${i+1}</td><td>${pt.stopName}</td>
     <td class="mono">${pt.arrival||'—'}</td>
     <td class="mono">${pt.departure||'—'}</td>
     <td class="mono" style="font-size:11px;color:var(--muted)">${pt.stopRef}</td></tr>`).join('');
@@ -941,11 +1026,77 @@ function renderQuality(data) {
   el.innerHTML = body;
 }
 
+// ── XML Viewer ───────────────────────────────────────────
+function highlightXMLLine(raw) {
+  // Minimal, sicheres XML-Syntax-Highlighting (input ist bereits escaped)
+  return raw
+    .replace(/(&lt;\/?)([\w:.-]+)/g, '$1<span class="xml-tag">$2</span>')
+    .replace(/([\w:.-]+)=(&quot;[^&]*&quot;)/g,
+             '<span class="xml-attr">$1</span>=<span class="xml-val">$2</span>');
+}
+
+function renderXMLViewer(xml) {
+  const el = document.getElementById('tab-xml');
+  const lines = xml.split('\n');
+  const rows = lines.map((line, i) => {
+    const escaped = escHtml(line);
+    const hl = highlightXMLLine(escaped);
+    return `<div class="xml-line" id="xmlline-${i+1}">` +
+           `<span class="xml-lineno">${i+1}</span>` +
+           `<span class="xml-content">${hl || ' '}</span></div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="xml-toolbar">
+      <input class="xml-search" id="xml-search" placeholder="Suche im XML…"
+             oninput="searchXML(this.value)">
+      <span class="qa-ctx" id="xml-search-count"></span>
+      <span class="qa-ctx" style="margin-left:auto">${lines.length} Zeilen</span>
+    </div>
+    <div class="xml-code" id="xml-code">${rows}</div>`;
+}
+
+let xmlSearchMatches = [], xmlSearchIdx = 0;
+function searchXML(term) {
+  // clear previous
+  document.querySelectorAll('.xml-line.highlight').forEach(e => e.classList.remove('highlight'));
+  xmlSearchMatches = [];
+  const countEl = document.getElementById('xml-search-count');
+  if (!term || term.length < 2) { countEl.textContent = ''; return; }
+
+  const lower = term.toLowerCase();
+  const lines = rawXML.split('\n');
+  lines.forEach((line, i) => {
+    if (line.toLowerCase().includes(lower)) xmlSearchMatches.push(i+1);
+  });
+
+  countEl.textContent = xmlSearchMatches.length + ' Treffer';
+  xmlSearchMatches.forEach(n => document.getElementById('xmlline-'+n)?.classList.add('highlight'));
+  if (xmlSearchMatches.length) {
+    document.getElementById('xmlline-'+xmlSearchMatches[0])
+      ?.scrollIntoView({block:'center', behavior:'smooth'});
+  }
+}
+
+// Sprung zu einer Zeile (vom XSD-Fehler-Modal aus)
+function jumpToXMLLine(lineNo) {
+  closeModal();
+  showTab('xml');
+  setTimeout(() => {
+    document.querySelectorAll('.xml-line.highlight').forEach(e => e.classList.remove('highlight'));
+    const row = document.getElementById('xmlline-'+lineNo);
+    if (row) {
+      row.classList.add('highlight');
+      row.scrollIntoView({block:'center', behavior:'smooth'});
+    }
+  }, 80);
+}
+
 // ════════════════════════════════════════════════════════
 //  Tabs
 // ════════════════════════════════════════════════════════
 function showTab(name) {
-  ['map','marey','detail','quality'].forEach((t,i) => {
+  ['map','marey','detail','quality','xml'].forEach((t,i) => {
     document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
     document.querySelectorAll('.tab')[i].classList.toggle('active', t===name);
   });
@@ -1032,11 +1183,14 @@ function showValidationModal() {
   if (r.valid) {
     body.innerHTML = `<div class="val-summary ok">✅ Datei ist gültig gegen NeTEx 2.0 XSD${r.duration_ms ? ' (' + r.duration_ms + ' ms)' : ''}</div>`;
   } else {
-    const rows = (r.errors||[]).map(e => `
-      <div class="err-row">
-        <div class="err-loc">Zeile ${e.line||'?'}${e.col ? ', Spalte '+e.col : ''} — ${e.level||'error'}</div>
+    const rows = (r.errors||[]).map(e => {
+      const canJump = e.line && rawXML;
+      return `
+      <div class="err-row${canJump ? ' clickable' : ''}"${canJump ? ` onclick="jumpToXMLLine(${e.line})"` : ''}>
+        <div class="err-loc">Zeile ${e.line||'?'}${e.col ? ', Spalte '+e.col : ''} — ${e.level||'error'}${canJump ? ' · zum XML springen ↗' : ''}</div>
         <div class="err-msg">${escHtml(e.message)}</div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     body.innerHTML = `
       <div class="val-summary err">❌ ${r.error_count||r.errors?.length||'?'} Fehler gefunden${r.duration_ms ? ' (' + r.duration_ms + ' ms)' : ''}</div>
       ${rows}`;
