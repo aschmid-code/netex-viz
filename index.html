@@ -986,12 +986,20 @@ async function validateXML(xmlContent, filename) {
   badge.className = 'val-badge loading show';
   icon.textContent = '⏳'; text.textContent = 'Validiere…';
 
+  // Nach 4 Sek: Hinweis dass der Server evtl. gerade hochfährt (Render Cold Start)
+  const coldStartHint = setTimeout(() => {
+    if (badge.classList.contains('loading')) {
+      text.textContent = 'Validiere… (Server startet, bis zu 50 Sek)';
+    }
+  }, 4000);
+
   try {
     const blob = new Blob([xmlContent], {type:'application/xml'});
     const form = new FormData();
     form.append('file', blob, filename);
 
     const res = await fetch(VALIDATOR_URL, {method:'POST', body:form});
+    clearTimeout(coldStartHint);
     if (!res.ok) throw new Error('Validator nicht erreichbar (HTTP ' + res.status + ')');
     const data = await res.json();
     lastValidationResult = data;
@@ -1005,6 +1013,7 @@ async function validateXML(xmlContent, filename) {
       text.textContent = 'XSD — ' + data.error_count + ' Fehler — Details anzeigen';
     }
   } catch(e) {
+    clearTimeout(coldStartHint);
     badge.className = 'val-badge invalid show';
     document.getElementById('val-icon').textContent = '⚠️';
     document.getElementById('val-text').textContent = 'XSD — Validator nicht erreichbar';
