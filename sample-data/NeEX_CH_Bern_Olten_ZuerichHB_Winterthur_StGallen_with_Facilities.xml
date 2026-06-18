@@ -216,21 +216,21 @@ with attributes
 							<Name>Winterthur</Name>
 							<Centroid>
 								<Location>
-									<Longitude>7.558970</Longitude>
-									<Latitude>47.4464565</Latitude>
-									<Altitude>426</Altitude>
+									<Longitude>8.724100</Longitude>
+									<Latitude>47.4998200</Latitude>
+									<Altitude>439</Altitude>
 								</Location>
 							</Centroid>
 							<quays>
-								<Quay id="ch:1:sloid:6000:5" version="1">
+								<Quay id="ch:1:sloid:6000" version="1">
 									<keyList>
 										<KeyValue>
 											<Key>SLOID</Key>
-											<Value>ch:1:sloid:6000:5</Value>
+											<Value>ch:1:sloid:6000</Value>
 										</KeyValue>
 									</keyList>
 									<privateCodes>
-										<PrivateCode type="sloid">ch:1:sloid:6000:5</PrivateCode>
+										<PrivateCode type="sloid">ch:1:sloid:6000</PrivateCode>
 									</privateCodes>
 									<PublicCode>1</PublicCode>
 								</Quay>
@@ -307,7 +307,7 @@ with attributes
 						<ScheduledStopPoint id="ch:1:sloid:3000:501:33" version="1">
 							<Name>Zuerich_HB</Name>
 						</ScheduledStopPoint>
-						<ScheduledStopPoint id="ch:1:sloid:6000:5" version="1">
+						<ScheduledStopPoint id="ch:1:sloid:6000" version="1">
 							<Name>Winterthur</Name>
 						</ScheduledStopPoint>
 						<ScheduledStopPoint id="ch:1:sloid:6302:1" version="1">
@@ -331,9 +331,9 @@ with attributes
 							<QuayRef ref="ch:1:sloid:3000:501:33" version="1"/>
 						</PassengerStopAssignment>
 						<PassengerStopAssignment id="ch:SBB:PSA:Winterthur" version="1" order="4">
-							<ScheduledStopPointRef ref="ch:1:sloid:6000:5" version="1"/>
+							<ScheduledStopPointRef ref="ch:1:sloid:6000" version="1"/>
 							<StopPlaceRef ref="ch:1:sloid:6000" version="1"/>
-							<QuayRef ref="ch:1:sloid:6000:5" version="1"/>
+							<QuayRef ref="ch:1:sloid:6000" version="1"/>
 						</PassengerStopAssignment>
 						<PassengerStopAssignment id="ch:SBB:PSA:St_Gallen" version="1" order="5">
 							<ScheduledStopPointRef ref="ch:1:sloid:6302:1" version="1"/>
@@ -361,7 +361,7 @@ with attributes
 									<ForBoarding>true</ForBoarding>
 								</StopPointInJourneyPattern>
 								<StopPointInJourneyPattern id="ch:SBB:JP:703-00:4" version="1" order="4">
-									<ScheduledStopPointRef ref="ch:1:sloid:6000:5" version="1"/>
+									<ScheduledStopPointRef ref="ch:1:sloid:6000" version="1"/>
 									<ForAlighting>true</ForAlighting>
 									<ForBoarding>true</ForBoarding>
 								</StopPointInJourneyPattern>
