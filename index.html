@@ -171,41 +171,55 @@ function parseNeTEx(xmlString) {
   return { stops, lines, journeys };
 }
 
+// Numeric suffix extractor: ch:1:SchedStopPoint:7000 -> "7000"
+function numericSuffix(id) {
+  const m = id.match(/:(\d+)(?:[:_-]|$)/);
+  return m ? m[1] : null;
+}
+
 function parseStops(doc) {
   const stops = {};
 
-  // StopPlace — hat Koordinaten; ID-Prefix für späteres Matching merken
   nx(doc, 'StopPlace').forEach(sp => {
     const id  = sp.getAttribute('id');
     const lat = parseFloat(txt(sp,'Latitude'))  || null;
     const lon = parseFloat(txt(sp,'Longitude')) || null;
     const alt = parseFloat(txt(sp,'Altitude'))  || null;
-    // Name: erst Name, dann AlternativeText/Text
     const nameEl = nxFirst(sp,'Name') || nxFirst(sp,'Text');
     stops[id] = { id, name: nameEl?.textContent.trim() || id, lat, lon, alt, type:'StopPlace' };
   });
 
-  // ScheduledStopPoint — hat Namen, meist keine Koordinaten
-  // Koordinaten-Fallback: StopPlace dessen ID ein Präfix der SSP-ID ist
+  // Index StopPlaces by numeric suffix for fallback matching
+  const stopsBySuffix = {};
+  Object.values(stops).forEach(sp => {
+    const s = numericSuffix(sp.id);
+    if (s) stopsBySuffix[s] = sp;
+  });
+
   nx(doc, 'ScheduledStopPoint').forEach(ssp => {
     const id   = ssp.getAttribute('id');
     const name = txt(ssp,'Name') || id;
     let   lat  = parseFloat(txt(ssp,'Latitude'))  || null;
     let   lon  = parseFloat(txt(ssp,'Longitude')) || null;
 
-    // Koordinaten-Fallback: StopPlace-ID ist Präfix der SSP-ID
-    // z.B. ch:1:sloid:95598  →  ch:1:sloid:95598:0:2
     if (!lat || !lon) {
-      const parent = Object.values(stops).find(sp =>
+      // Fallback 1: StopPlace-ID ist Präfix der SSP-ID (ch:1:sloid:95598 -> ch:1:sloid:95598:0:2)
+      const prefixMatch = Object.values(stops).find(sp =>
         id.startsWith(sp.id + ':') || id.startsWith(sp.id + '-')
       );
-      if (parent) { lat = parent.lat; lon = parent.lon; }
+      if (prefixMatch) { lat = prefixMatch.lat; lon = prefixMatch.lon; }
+      else {
+        // Fallback 2: gleiche numerische Endung, anderes Präfix
+        // (ch:1:SchedStopPoint:7000 -> ch:1:StopPlace:7000)
+        const s = numericSuffix(id);
+        const suffixMatch = s ? stopsBySuffix[s] : null;
+        if (suffixMatch) { lat = suffixMatch.lat; lon = suffixMatch.lon; }
+      }
     }
 
     if (!stops[id]) {
       stops[id] = { id, name, lat, lon, alt:null, type:'ScheduledStopPoint' };
     } else {
-      // Enrich existing entry with name from SSP
       if (!stops[id].name || stops[id].name === stops[id].id) stops[id].name = name;
     }
   });
@@ -230,11 +244,14 @@ function parseLines(doc) {
 }
 
 function parseJourneys(doc, stops) {
-  // StopPointInJourneyPattern → SSP-ref + order
+  // StopPointInJourneyPattern -> SSP-ref + order
+  // order fallback: use document sequence index when order attribute missing
   const spijpMap = {}, spijpOrder = {};
-  nx(doc,'StopPointInJourneyPattern').forEach(sp => {
+  nx(doc,'StopPointInJourneyPattern').forEach((sp, seqIdx) => {
     const id    = sp.getAttribute('id');
-    const order = parseInt(sp.getAttribute('order') || '0', 10);
+    const order = sp.hasAttribute('order')
+      ? parseInt(sp.getAttribute('order'), 10)
+      : seqIdx + 1;
     const ref   = nxFirst(sp,'ScheduledStopPointRef');
     if (ref) { spijpMap[id] = ref.getAttribute('ref'); spijpOrder[id] = order; }
   });
@@ -243,13 +260,23 @@ function parseJourneys(doc, stops) {
     const id      = sj.getAttribute('id');
     const lineRef = nxFirst(sj,'LineRef');
 
-    const pts = nx(sj,'TimetabledPassingTime').map(pt => {
-      const refEl  = nxFirst(pt,'PointInJourneyPatternRef') || nxFirst(pt,'StopPointInJourneyPatternRef');
-      let stopRef  = '', order = 0;
+    const pts = nx(sj,'TimetabledPassingTime').map((pt, seqIdx) => {
+      // namespace-aware search, then localName fallback
+      let refEl = nxFirst(pt,'PointInJourneyPatternRef')
+               || nxFirst(pt,'StopPointInJourneyPatternRef');
+      if (!refEl) {
+        for (const child of pt.children) {
+          const ln = child.localName;
+          if (ln === 'PointInJourneyPatternRef' || ln === 'StopPointInJourneyPatternRef') {
+            refEl = child; break;
+          }
+        }
+      }
+      let stopRef  = '', order = seqIdx + 1;
       if (refEl) {
         const spRef = refEl.getAttribute('ref');
         stopRef = spijpMap[spRef] || spRef;
-        order   = spijpOrder[spRef] || 0;
+        order   = spijpOrder[spRef] || seqIdx + 1;
       }
       const stop = stops[stopRef] || {};
       return {
