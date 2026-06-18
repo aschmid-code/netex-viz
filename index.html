@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeTEx Visualizer CH</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+
+    /* ── Theme tokens ── */
+    :root {
+      --bg:#f5f6fa; --bg2:#ffffff; --bg3:#eef0f7; --border:#d0d4e8;
+      --text:#1a1d2e; --muted:#5c6380; --accent:#5c6bc0; --accent2:#1976d2;
+      --amber:#e65100; --red:#c62828; --green:#2e7d32;
+      --map-tile: 'light';
+    }
+    [data-theme="dark"] {
+      --bg:#0f1117; --bg2:#1a1d27; --bg3:#22263a; --border:#2d3250;
+      --text:#e8eaf6; --muted:#7986cb; --accent:#5c6bc0; --accent2:#42a5f5;
+      --amber:#ffa726; --red:#ef5350; --green:#66bb6a;
+    }
+
+    body { background:var(--bg); color:var(--text); font-family:system-ui,sans-serif; font-size:14px; height:100vh; display:flex; flex-direction:column; overflow:hidden; transition:background .2s,color .2s; }
+
+    /* ── Header ── */
+    header { background:var(--bg2); border-bottom:1px solid var(--border); padding:0 16px; height:52px; display:flex; align-items:center; gap:10px; flex-shrink:0; }
+    .logo { font-size:15px; font-weight:600; display:flex; align-items:center; gap:8px; white-space:nowrap; }
+    .badge { background:var(--accent); color:#fff; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:500; }
+    .btn { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:6px 11px; border-radius:6px; cursor:pointer; font-size:13px; white-space:nowrap; }
+    .btn:hover { border-color:var(--accent); }
+    .theme-btn { font-size:16px; padding:4px 8px; line-height:1; }
+    #status { margin-left:auto; font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:300px; }
+    #file-input { display:none; }
+    .sample-select { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:13px; cursor:pointer; max-width:240px; }
+
+    /* ── Layout ── */
+    .app { display:flex; flex:1; overflow:hidden; }
+    .sidebar { width:265px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; flex-shrink:0; }
+    .main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+
+    /* ── Sidebar ── */
+    .sb-section { padding:11px 14px 8px; border-bottom:1px solid var(--border); }
+    .sb-title { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); margin-bottom:6px; }
+    .stat-row { display:flex; justify-content:space-between; padding:3px 0; }
+    .stat-label { color:var(--muted); font-size:12px; }
+    .stat-val { font-weight:600; font-size:13px; }
+    .journey-list { overflow-y:auto; flex:1; }
+    .ji { padding:9px 14px; border-bottom:1px solid var(--border); cursor:pointer; }
+    .ji:hover, .ji.active { background:var(--bg3); }
+    .ji-name { font-size:13px; font-weight:500; }
+    .ji-meta { font-size:11px; color:var(--muted); margin-top:2px; }
+    .mode-pill { display:inline-block; font-size:10px; padding:1px 5px; border-radius:3px; font-weight:600; margin-right:4px; }
+    .m-rail  { background:rgba(92,107,192,.2);  color:#5c6bc0; }
+    .m-bus   { background:rgba(25,118,210,.15); color:#1976d2; }
+    .m-other { background:rgba(46,125,50,.15);  color:#2e7d32; }
+    [data-theme="dark"] .m-rail  { background:rgba(92,107,192,.3);  color:#9fa8da; }
+    [data-theme="dark"] .m-bus   { background:rgba(66,165,245,.25); color:#90caf9; }
+    [data-theme="dark"] .m-other { background:rgba(102,187,106,.2); color:#a5d6a7; }
+
+    /* ── Tabs ── */
+    .tabs { display:flex; background:var(--bg2); border-bottom:1px solid var(--border); flex-shrink:0; }
+    .tab { padding:10px 18px; font-size:13px; cursor:pointer; border-bottom:2px solid transparent; color:var(--muted); }
+    .tab.active { color:var(--text); border-bottom-color:var(--accent2); }
+    .tab:hover { color:var(--text); }
+
+    /* ── Map ── */
+    #map { flex:1; }
+    .map-wrap { flex:1; display:flex; flex-direction:column; position:relative; }
+    .map-wrap.hidden { display:none; }
+    .leaflet-popup-content-wrapper { background:var(--bg2); color:var(--text); border:1px solid var(--border); border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,.15); }
+    .leaflet-popup-tip { background:var(--bg2); }
+    .leaflet-popup-content { font-size:13px; }
+
+    /* ── Marey ── */
+    .marey-wrap { flex:1; overflow:auto; display:flex; flex-direction:column; }
+    .marey-wrap.hidden { display:none; }
+    #marey-container { flex:1; padding:16px; }
+
+    /* ── Detail ── */
+    .detail-wrap { flex:1; overflow-y:auto; padding:20px; }
+    .detail-wrap.hidden { display:none; }
+    .detail-table { width:100%; border-collapse:collapse; margin-top:8px; }
+    .detail-table th { text-align:left; padding:6px 10px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); border-bottom:1px solid var(--border); }
+    .detail-table td { padding:7px 10px; font-size:13px; border-bottom:1px solid var(--border); }
+    .detail-table tr:hover td { background:var(--bg3); }
+    .mono { font-family:monospace; font-size:12px; }
+    .sh { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); margin:16px 0 6px; }
+
+    /* ── Drop overlay ── */
+    .drop-overlay { display:none; position:fixed; inset:0; background:rgba(92,107,192,.12); border:2px dashed var(--accent); z-index:9999; align-items:center; justify-content:center; font-size:20px; color:var(--accent); backdrop-filter:blur(2px); }
+    .drop-overlay.active { display:flex; }
+
+    /* ── Empty ── */
+    .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; flex:1; color:var(--muted); gap:8px; font-size:13px; }
+  </style>
+</head>
+<body>
+
+<div class="drop-overlay" id="drop-overlay">XML-Datei hier ablegen ↓</div>
+
+<header>
+  <div class="logo"><span class="badge">NeTEx</span> Visualizer CH</div>
+  <select class="sample-select" id="sample-select" onchange="loadSample(this.value)">
+    <option value="">— Beispiel laden —</option>
+    <option value="sample-data/NeTEx_Spiez_Interlaken_Ost_PassingTime.xml">Spiez → Interlaken Ost</option>
+    <option value="sample-data/NeEX_CH_Bern_Olten_ZuerichHB_Winterthur_StGallen_with_Facilities.xml">Bern → St. Gallen</option>
+  </select>
+  <button class="btn" onclick="document.getElementById('file-input').click()">⬆ Eigene XML</button>
+  <input type="file" id="file-input" accept=".xml" onchange="loadLocalFile(this)">
+  <button class="btn theme-btn" id="theme-toggle" onclick="toggleTheme()" title="Hell/Dunkel umschalten">☀️</button>
+  <span id="status">Datei laden oder Beispiel wählen</span>
+</header>
+
+<div class="app">
+  <div class="sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Übersicht</div>
+      <div class="stat-row"><span class="stat-label">Haltestellen</span><span class="stat-val" id="s-stops">—</span></div>
+      <div class="stat-row"><span class="stat-label">Linien</span><span class="stat-val" id="s-lines">—</span></div>
+      <div class="stat-row"><span class="stat-label">Fahrten</span><span class="stat-val" id="s-journeys">—</span></div>
+    </div>
+    <div class="sb-section"><div class="sb-title">Fahrten</div></div>
+    <div class="journey-list" id="journey-list">
+      <div class="empty" style="padding:32px 0">Keine Daten</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="tabs">
+      <div class="tab active" onclick="showTab('map')">🗺 Karte</div>
+      <div class="tab" onclick="showTab('marey')">📊 Fahrplan</div>
+      <div class="tab" onclick="showTab('detail')">📋 Details</div>
+    </div>
+    <div class="map-wrap" id="tab-map"><div id="map"></div></div>
+    <div class="marey-wrap hidden" id="tab-marey"><div id="marey-container"><div class="empty">Datei laden</div></div></div>
+    <div class="detail-wrap hidden" id="tab-detail"><div class="empty">Fahrt in der Liste wählen</div></div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  Theme
+// ════════════════════════════════════════════════════════
+let darkMode = false;
+function toggleTheme() {
+  darkMode = !darkMode;
+  document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : '');
+  document.getElementById('theme-toggle').textContent = darkMode ? '🌙' : '☀️';
+  updateMapTiles();
+}
+
+// ════════════════════════════════════════════════════════
+//  NeTEx XML Parser
+// ════════════════════════════════════════════════════════
+const NX = 'http://www.netex.org.uk/netex';
+function nx(el, tag)      { return [...el.getElementsByTagNameNS(NX, tag)]; }
+function nxFirst(el, tag) { return el.getElementsByTagNameNS(NX, tag)[0] || null; }
+function txt(el, tag)     { const f = nxFirst(el, tag); return f ? f.textContent.trim() : null; }
+
+function parseNeTEx(xmlString) {
+  const doc = new DOMParser().parseFromString(xmlString, 'application/xml');
+  const err = doc.querySelector('parsererror');
+  if (err) throw new Error('XML-Fehler: ' + err.textContent.slice(0,200));
+
+  const stops    = parseStops(doc);
+  const lines    = parseLines(doc);
+  const journeys = parseJourneys(doc, stops);
+  return { stops, lines, journeys };
+}
+
+function parseStops(doc) {
+  const stops = {};
+
+  // StopPlace — hat Koordinaten; ID-Prefix für späteres Matching merken
+  nx(doc, 'StopPlace').forEach(sp => {
+    const id  = sp.getAttribute('id');
+    const lat = parseFloat(txt(sp,'Latitude'))  || null;
+    const lon = parseFloat(txt(sp,'Longitude')) || null;
+    const alt = parseFloat(txt(sp,'Altitude'))  || null;
+    // Name: erst Name, dann AlternativeText/Text
+    const nameEl = nxFirst(sp,'Name') || nxFirst(sp,'Text');
+    stops[id] = { id, name: nameEl?.textContent.trim() || id, lat, lon, alt, type:'StopPlace' };
+  });
+
+  // ScheduledStopPoint — hat Namen, meist keine Koordinaten
+  // Koordinaten-Fallback: StopPlace dessen ID ein Präfix der SSP-ID ist
+  nx(doc, 'ScheduledStopPoint').forEach(ssp => {
+    const id   = ssp.getAttribute('id');
+    const name = txt(ssp,'Name') || id;
+    let   lat  = parseFloat(txt(ssp,'Latitude'))  || null;
+    let   lon  = parseFloat(txt(ssp,'Longitude')) || null;
+
+    // Koordinaten-Fallback: StopPlace-ID ist Präfix der SSP-ID
+    // z.B. ch:1:sloid:95598  →  ch:1:sloid:95598:0:2
+    if (!lat || !lon) {
+      const parent = Object.values(stops).find(sp =>
+        id.startsWith(sp.id + ':') || id.startsWith(sp.id + '-')
+      );
+      if (parent) { lat = parent.lat; lon = parent.lon; }
+    }
+
+    if (!stops[id]) {
+      stops[id] = { id, name, lat, lon, alt:null, type:'ScheduledStopPoint' };
+    } else {
+      // Enrich existing entry with name from SSP
+      if (!stops[id].name || stops[id].name === stops[id].id) stops[id].name = name;
+    }
+  });
+
+  return stops;
+}
+
+function parseLines(doc) {
+  const lines = {};
+  nx(doc, 'Line').forEach(l => {
+    const id = l.getAttribute('id');
+    const opRef = nxFirst(l,'OperatorRef');
+    lines[id] = {
+      id,
+      name:      txt(l,'Name')          || id,
+      shortName: txt(l,'ShortName')     || null,
+      mode:      txt(l,'TransportMode') || null,
+      operator:  opRef ? opRef.getAttribute('ref') : null,
+    };
+  });
+  return lines;
+}
+
+function parseJourneys(doc, stops) {
+  // StopPointInJourneyPattern → SSP-ref + order
+  const spijpMap = {}, spijpOrder = {};
+  nx(doc,'StopPointInJourneyPattern').forEach(sp => {
+    const id    = sp.getAttribute('id');
+    const order = parseInt(sp.getAttribute('order') || '0', 10);
+    const ref   = nxFirst(sp,'ScheduledStopPointRef');
+    if (ref) { spijpMap[id] = ref.getAttribute('ref'); spijpOrder[id] = order; }
+  });
+
+  return nx(doc,'ServiceJourney').map(sj => {
+    const id      = sj.getAttribute('id');
+    const lineRef = nxFirst(sj,'LineRef');
+
+    const pts = nx(sj,'TimetabledPassingTime').map(pt => {
+      const refEl  = nxFirst(pt,'PointInJourneyPatternRef') || nxFirst(pt,'StopPointInJourneyPatternRef');
+      let stopRef  = '', order = 0;
+      if (refEl) {
+        const spRef = refEl.getAttribute('ref');
+        stopRef = spijpMap[spRef] || spRef;
+        order   = spijpOrder[spRef] || 0;
+      }
+      const stop = stops[stopRef] || {};
+      return {
+        stopRef,
+        stopName:  stop.name || stopRef,
+        lat:       stop.lat  || null,
+        lon:       stop.lon  || null,
+        arrival:   txt(pt,'ArrivalTime'),
+        departure: txt(pt,'DepartureTime'),
+        order,
+      };
+    });
+
+    pts.sort((a,b) => a.order - b.order);
+    return {
+      id,
+      name:     txt(sj,'Name'),
+      lineRef:  lineRef ? lineRef.getAttribute('ref') : null,
+      passingTimes: pts,
+    };
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  State & Map init
+// ════════════════════════════════════════════════════════
+let parsedData = null, activeJourney = null;
+let lineLayer, stopLayer, tileLayers = {};
+
+const map = L.map('map').setView([46.8, 8.2], 8);
+
+// Two tile layers: light + dark
+tileLayers.light = L.tileLayer(
+  'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+  { attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:19 }
+).addTo(map);
+
+tileLayers.dark = L.tileLayer(
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  { attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:19 }
+);
+
+lineLayer = L.layerGroup().addTo(map);
+stopLayer = L.layerGroup().addTo(map);
+
+function updateMapTiles() {
+  if (darkMode) {
+    tileLayers.light.remove();
+    tileLayers.dark.addTo(map);
+  } else {
+    tileLayers.dark.remove();
+    tileLayers.light.addTo(map);
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  File loading
+// ════════════════════════════════════════════════════════
+async function loadSample(path) {
+  if (!path) return;
+  setStatus('Lädt…');
+  try {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    processXML(await res.text(), path.split('/').pop());
+  } catch(e) { setStatus('Fehler: ' + e.message, true); }
+}
+
+function loadLocalFile(input) {
+  if (!input.files[0]) return;
+  const file = input.files[0];
+  setStatus('Liest Datei…');
+  const r = new FileReader();
+  r.onload  = e => processXML(e.target.result, file.name);
+  r.onerror = () => setStatus('Lesefehler', true);
+  r.readAsText(file, 'UTF-8');
+  input.value = '';
+}
+
+function processXML(xml, filename) {
+  try {
+    parsedData = parseNeTEx(xml);
+    renderAll(filename);
+    setStatus(filename + ' — ' + parsedData.journeys.length + ' Fahrten');
+  } catch(e) {
+    setStatus('Parse-Fehler: ' + e.message, true);
+    console.error(e);
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  Render
+// ════════════════════════════════════════════════════════
+function renderAll(filename) {
+  const { stops, lines, journeys } = parsedData;
+  document.getElementById('s-stops').textContent    = Object.keys(stops).length;
+  document.getElementById('s-lines').textContent    = Object.keys(lines).length;
+  document.getElementById('s-journeys').textContent = journeys.length;
+  renderJourneyList(journeys, lines);
+  renderMap(stops, journeys);
+  renderMarey(stops, journeys);
+  if (journeys.length) selectJourney(0);
+}
+
+// ── Sidebar ──────────────────────────────────────────────
+function modeClass(m) {
+  if (!m) return 'm-other';
+  m = m.toLowerCase();
+  return m.includes('rail')||m.includes('train') ? 'm-rail' : m.includes('bus') ? 'm-bus' : 'm-other';
+}
+function modeLabel(m) {
+  if (!m) return 'ÖV';
+  m = m.toLowerCase();
+  return m.includes('rail')||m.includes('train') ? 'RAIL' : m.includes('bus') ? 'BUS' : m.slice(0,4).toUpperCase();
+}
+
+function renderJourneyList(journeys, lines) {
+  const el = document.getElementById('journey-list');
+  if (!journeys.length) { el.innerHTML = '<div class="empty" style="padding:24px 0">Keine Fahrten</div>'; return; }
+  el.innerHTML = journeys.map((j,i) => {
+    const line = j.lineRef ? lines[j.lineRef] : null;
+    const pts  = j.passingTimes;
+    const from = pts[0]?.stopName || '?';
+    const to   = pts[pts.length-1]?.stopName || '?';
+    const dep  = pts[0]?.departure || pts[0]?.arrival || '';
+    return `<div class="ji" id="ji-${i}" onclick="selectJourney(${i})">
+      <div class="ji-name"><span class="mode-pill ${modeClass(line?.mode)}">${modeLabel(line?.mode)}</span>${j.name||j.id.split(':').pop()}</div>
+      <div class="ji-meta">${from} → ${to}${dep?' | ab '+dep:''}</div>
+    </div>`;
+  }).join('');
+}
+
+function selectJourney(i) {
+  document.querySelectorAll('.ji').forEach(e=>e.classList.remove('active'));
+  document.getElementById('ji-'+i)?.classList.add('active');
+  activeJourney = parsedData.journeys[i];
+  highlightJourney(activeJourney);
+  renderDetail(activeJourney);
+}
+
+// ── Map ──────────────────────────────────────────────────
+// Journey colours — one per journey index
+const JOURNEY_COLORS = ['#1976d2','#e53935','#388e3c','#f57c00','#7b1fa2','#00838f','#5d4037'];
+
+function renderMap(stops, journeys) {
+  lineLayer.clearLayers();
+  stopLayer.clearLayers();
+
+  // Draw all journeys as polylines
+  journeys.forEach((j, ji) => {
+    const coords = j.passingTimes
+      .filter(p => p.lat && p.lon)
+      .map(p => [p.lat, p.lon]);
+    if (coords.length > 1) {
+      L.polyline(coords, {
+        color:   JOURNEY_COLORS[ji % JOURNEY_COLORS.length],
+        weight:  4,
+        opacity: 0.75,
+      }).bindTooltip(j.name || j.id.split(':').pop(), {sticky:true}).addTo(lineLayer);
+    }
+  });
+
+  // Draw stops — deduplicated by lat/lon
+  const bounds = [];
+  const drawn  = new Set();
+  Object.values(stops).forEach(s => {
+    if (!s.lat || !s.lon) return;
+    const key = s.lat.toFixed(5) + ',' + s.lon.toFixed(5);
+    if (drawn.has(key)) return;
+    drawn.add(key);
+    bounds.push([s.lat, s.lon]);
+    L.circleMarker([s.lat, s.lon], {
+      radius:8, fillColor:'#fff', color:'#1976d2',
+      weight:2.5, fillOpacity:1,
+    }).bindPopup(`<b>${s.name}</b><br><span style="font-family:monospace;font-size:11px">${s.id}</span>`)
+      .addTo(stopLayer);
+  });
+
+  if (bounds.length) map.fitBounds(bounds, {padding:[40,40]});
+}
+
+function highlightJourney(j) {
+  lineLayer.clearLayers();
+  parsedData.journeys.forEach((jj, ji) => {
+    const coords = jj.passingTimes.filter(p=>p.lat&&p.lon).map(p=>[p.lat,p.lon]);
+    if (coords.length < 2) return;
+    const active = jj === j;
+    L.polyline(coords, {
+      color:   active ? '#e53935' : JOURNEY_COLORS[ji % JOURNEY_COLORS.length],
+      weight:  active ? 6 : 3,
+      opacity: active ? 1 : 0.3,
+    }).bindTooltip(jj.name||jj.id.split(':').pop(), {sticky:true}).addTo(lineLayer);
+  });
+}
+
+// ── Marey ────────────────────────────────────────────────
+function timeToMin(t) {
+  if (!t) return null;
+  const [h,m,s] = t.split(':').map(Number);
+  return h*60 + m + (s||0)/60;
+}
+
+function renderMarey(stops, journeys) {
+  const container = document.getElementById('marey-container');
+  const orderedStops = [];
+  const seen = new Set();
+  journeys.forEach(j => j.passingTimes.forEach(pt => {
+    if (!seen.has(pt.stopRef)) { seen.add(pt.stopRef); orderedStops.push({id:pt.stopRef, name:pt.stopName}); }
+  }));
+
+  const allTimes = journeys.flatMap(j => j.passingTimes.flatMap(p =>
+    [p.arrival,p.departure].map(timeToMin).filter(t=>t!==null)
+  ));
+
+  if (!orderedStops.length || !allTimes.length) {
+    container.innerHTML = '<div class="empty" style="height:200px">Keine Zeitdaten verfügbar</div>';
+    return;
+  }
+
+  const tMin  = Math.floor(Math.min(...allTimes)/30)*30;
+  const tMax  = Math.ceil( Math.max(...allTimes)/30)*30;
+  const margin = {top:44, right:70, bottom:20, left:175};
+  const rowH   = 36;
+  const colW   = Math.max(70, Math.floor((Math.min(window.innerWidth-290,900)-margin.left-margin.right)/journeys.length));
+  const svgW   = margin.left + journeys.length*colW + margin.right;
+  const svgH   = margin.top  + orderedStops.length*rowH + margin.bottom;
+  const stopIdx = Object.fromEntries(orderedStops.map((s,i)=>[s.id,i]));
+  const yOf = t => margin.top + ((t-tMin)/(tMax-tMin)) * orderedStops.length*rowH;
+
+  const isDark = darkMode;
+  const rowEven  = isDark ? 'rgba(26,29,39,.9)'  : 'rgba(240,242,250,.9)';
+  const rowOdd   = isDark ? 'rgba(34,38,58,.9)'  : 'rgba(255,255,255,.9)';
+  const labelCol = isDark ? '#7986cb' : '#5c6380';
+  const gridCol  = isDark ? 'rgba(45,50,80,.8)'  : 'rgba(180,185,210,.6)';
+  const timeCol  = isDark ? '#4a5568' : '#9aa0bc';
+  const dotFill  = isDark ? '#42a5f5' : '#1976d2';
+  const dotStroke= isDark ? '#0f1117' : '#ffffff';
+
+  const svg = d3.create('svg').attr('width',svgW).attr('height',svgH);
+
+  orderedStops.forEach((s,i) => {
+    svg.append('rect')
+      .attr('x',margin.left).attr('y',margin.top+i*rowH)
+      .attr('width',svgW-margin.left-margin.right).attr('height',rowH)
+      .attr('fill', i%2===0?rowEven:rowOdd);
+    const label = s.name.length>24 ? s.name.slice(0,22)+'…' : s.name;
+    svg.append('text')
+      .attr('x',margin.left-8).attr('y',margin.top+i*rowH+rowH/2)
+      .attr('text-anchor','end').attr('dominant-baseline','central')
+      .attr('fill',labelCol).attr('font-size',12).attr('font-family','system-ui,sans-serif')
+      .text(label);
+  });
+
+  for (let t=tMin; t<=tMax; t+=30) {
+    const y = yOf(t);
+    svg.append('line').attr('x1',margin.left).attr('x2',svgW-margin.right).attr('y1',y).attr('y2',y)
+      .attr('stroke',gridCol).attr('stroke-width',.5);
+    const h=Math.floor(t/60), m=t%60;
+    svg.append('text').attr('x',svgW-margin.right+4).attr('y',y)
+      .attr('dominant-baseline','central').attr('fill',timeCol).attr('font-size',10).attr('font-family','monospace')
+      .text(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
+  }
+
+  journeys.forEach((j,ji) => {
+    const x     = margin.left + ji*colW + colW/2;
+    const color = JOURNEY_COLORS[ji % JOURNEY_COLORS.length];
+    const label = (j.name||j.id.split(':').pop()).slice(0,10);
+    svg.append('text').attr('x',x).attr('y',margin.top-10)
+      .attr('text-anchor','middle').attr('fill',color)
+      .attr('font-size',11).attr('font-weight','600').attr('font-family','system-ui,sans-serif')
+      .text(label);
+
+    const pts = j.passingTimes.map(pt => {
+      const si = stopIdx[pt.stopRef];
+      if (si===undefined) return null;
+      const t = timeToMin(pt.departure||pt.arrival);
+      if (t===null) return null;
+      return {x, y:margin.top+si*rowH+rowH/2, time:pt.departure||pt.arrival};
+    }).filter(Boolean);
+
+    if (pts.length>1)
+      svg.append('path').datum(pts).attr('d',d3.line().x(d=>d.x).y(d=>d.y))
+        .attr('fill','none').attr('stroke',color).attr('stroke-width',2).attr('opacity',.9);
+
+    pts.forEach(p => {
+      svg.append('circle').attr('cx',p.x).attr('cy',p.y).attr('r',5)
+        .attr('fill',dotFill).attr('stroke',dotStroke).attr('stroke-width',1.5)
+        .append('title').text(p.time);
+    });
+  });
+
+  container.innerHTML = '';
+  container.appendChild(svg.node());
+}
+
+// ── Detail ───────────────────────────────────────────────
+function renderDetail(j) {
+  const el = document.getElementById('tab-detail');
+  if (!j) { el.innerHTML='<div class="empty">Fahrt wählen</div>'; return; }
+  const line = j.lineRef ? parsedData.lines[j.lineRef] : null;
+  const rows = j.passingTimes.map((pt,i) => `
+    <tr><td>${i+1}</td><td>${pt.stopName}</td>
+    <td class="mono">${pt.arrival||'—'}</td>
+    <td class="mono">${pt.departure||'—'}</td>
+    <td class="mono" style="font-size:11px;color:var(--muted)">${pt.stopRef}</td></tr>`).join('');
+  el.innerHTML = `
+    <div class="sh">Fahrt</div>
+    <div class="stat-row"><span class="stat-label">ID</span><span class="mono" style="font-size:12px">${j.id}</span></div>
+    <div class="stat-row"><span class="stat-label">Name</span><span>${j.name||'—'}</span></div>
+    <div class="stat-row"><span class="stat-label">Linie</span><span>${line?.name||j.lineRef||'—'}</span></div>
+    <div class="stat-row"><span class="stat-label">Modus</span><span>${line?.mode||'—'}</span></div>
+    <div class="sh" style="margin-top:18px">Passierungszeiten</div>
+    <table class="detail-table">
+      <thead><tr><th>#</th><th>Haltestelle</th><th>Ankunft</th><th>Abfahrt</th><th>Stop-Ref</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ════════════════════════════════════════════════════════
+//  Tabs
+// ════════════════════════════════════════════════════════
+function showTab(name) {
+  ['map','marey','detail'].forEach((t,i) => {
+    document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
+    document.querySelectorAll('.tab')[i].classList.toggle('active', t===name);
+  });
+  if (name==='map') setTimeout(()=>map.invalidateSize(),50);
+}
+
+// ════════════════════════════════════════════════════════
+//  Drag & Drop
+// ════════════════════════════════════════════════════════
+const dropOverlay = document.getElementById('drop-overlay');
+document.addEventListener('dragover',  e=>{e.preventDefault();dropOverlay.classList.add('active');});
+document.addEventListener('dragleave', e=>{if(!e.relatedTarget)dropOverlay.classList.remove('active');});
+document.addEventListener('drop', e=>{
+  e.preventDefault(); dropOverlay.classList.remove('active');
+  const f=e.dataTransfer.files[0];
+  if(f?.name.endsWith('.xml')){const r=new FileReader();r.onload=ev=>processXML(ev.target.result,f.name);r.readAsText(f,'UTF-8');}
+});
+
+// ════════════════════════════════════════════════════════
+//  Helpers
+// ════════════════════════════════════════════════════════
+function setStatus(msg, err=false) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.style.color = err ? 'var(--red)' : 'var(--muted)';
+}
+</script>
+</body>
+</html>
