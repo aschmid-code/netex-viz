@@ -701,12 +701,12 @@ async function validateXML(xmlContent, filename) {
     } else {
       badge.className = 'val-badge invalid show';
       icon.textContent = '❌';
-      text.textContent = data.error_count + ' Fehler — Details anzeigen';
+      text.textContent = 'XSD — ' + data.error_count + ' Fehler — Details anzeigen';
     }
   } catch(e) {
     badge.className = 'val-badge invalid show';
     document.getElementById('val-icon').textContent = '⚠️';
-    document.getElementById('val-text').textContent = 'Validator nicht erreichbar';
+    document.getElementById('val-text').textContent = 'XSD — Validator nicht erreichbar';
     lastValidationResult = {valid:false, errors:[{message:e.message, level:'error'}]};
   }
 }
