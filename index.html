@@ -197,7 +197,7 @@
   </select>
   <button class="btn" onclick="document.getElementById('file-input').click()">⬆ Eigene XML</button>
   <input type="file" id="file-input" accept=".xml" onchange="loadLocalFile(this)">
-  <div id="val-badge" class="val-badge" onclick="showValidationModal()">
+  <div id="val-badge" class="val-badge">
     <span id="val-icon"></span><span id="val-text"></span>
   </div>
   <button class="btn theme-btn" id="theme-toggle" onclick="toggleTheme()" title="Hell/Dunkel umschalten">☀️</button>
@@ -1130,48 +1130,98 @@ function setStatus(msg, err=false) {
 //  XSD Validation
 // ════════════════════════════════════════════════════════
 const VALIDATOR_URL = 'https://netex-validator.onrender.com/validate';
+const VALIDATOR_HEALTH = 'https://netex-validator.onrender.com/health';
 let lastValidationResult = null;
+let lastValidationInput = null;  // {xml, filename} für Retry
+
+// fetch mit Timeout via AbortController
+function fetchWithTimeout(url, opts, timeoutMs) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), timeoutMs);
+  return fetch(url, { ...opts, signal: ctrl.signal })
+    .finally(() => clearTimeout(id));
+}
 
 async function validateXML(xmlContent, filename) {
+  lastValidationInput = { xml: xmlContent, filename };
   const badge = document.getElementById('val-badge');
   const icon  = document.getElementById('val-icon');
   const text  = document.getElementById('val-text');
 
   badge.className = 'val-badge loading show';
+  badge.onclick = null;
   icon.textContent = '⏳'; text.textContent = 'Validiere…';
 
-  // Nach 4 Sek: Hinweis dass der Server evtl. gerade hochfährt (Render Cold Start)
-  const coldStartHint = setTimeout(() => {
-    if (badge.classList.contains('loading')) {
-      text.textContent = 'Validiere… (Server startet, bis zu 50 Sek)';
-    }
+  // Phasen-Hinweise während des Wartens
+  const hint1 = setTimeout(() => {
+    if (badge.classList.contains('loading'))
+      text.textContent = 'Validiere… (Server startet)';
   }, 4000);
+  const hint2 = setTimeout(() => {
+    if (badge.classList.contains('loading'))
+      text.textContent = 'Server fährt hoch… (Cold Start, ~30 Sek)';
+  }, 12000);
 
-  try {
-    const blob = new Blob([xmlContent], {type:'application/xml'});
-    const form = new FormData();
-    form.append('file', blob, filename);
+  const clearHints = () => { clearTimeout(hint1); clearTimeout(hint2); };
 
-    const res = await fetch(VALIDATOR_URL, {method:'POST', body:form});
-    clearTimeout(coldStartHint);
-    if (!res.ok) throw new Error('Validator nicht erreichbar (HTTP ' + res.status + ')');
-    const data = await res.json();
-    lastValidationResult = data;
+  // Bis zu 2 Versuche: erster kann am Cold-Start-Timeout scheitern,
+  // der Server ist danach aber wach → zweiter Versuch klappt schnell.
+  const MAX_ATTEMPTS = 2;
+  const TIMEOUT_MS = 35000;
 
-    if (data.valid) {
-      badge.className = 'val-badge valid show';
-      icon.textContent = '✅'; text.textContent = 'XSD gültig';
-    } else {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const blob = new Blob([xmlContent], {type:'application/xml'});
+      const form = new FormData();
+      form.append('file', blob, filename);
+
+      const res = await fetchWithTimeout(VALIDATOR_URL, {method:'POST', body:form}, TIMEOUT_MS);
+      clearHints();
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      lastValidationResult = data;
+
+      if (data.valid) {
+        badge.className = 'val-badge valid show';
+        badge.onclick = null;
+        icon.textContent = '✅'; text.textContent = 'XSD gültig';
+      } else {
+        badge.className = 'val-badge invalid show';
+        badge.onclick = showValidationModal;
+        icon.textContent = '❌';
+        text.textContent = 'XSD — ' + data.error_count + ' Fehler — Details anzeigen';
+      }
+      return;  // Erfolg → fertig
+
+    } catch(e) {
+      const isTimeout = e.name === 'AbortError';
+      // Beim ersten Timeout: Server ist jetzt vermutlich wach → nochmal
+      if (attempt < MAX_ATTEMPTS && isTimeout) {
+        text.textContent = 'Erster Versuch abgelaufen, neuer Versuch…';
+        continue;
+      }
+      // Endgültig fehlgeschlagen → klickbarer Retry
+      clearHints();
       badge.className = 'val-badge invalid show';
-      icon.textContent = '❌';
-      text.textContent = 'XSD — ' + data.error_count + ' Fehler — Details anzeigen';
+      icon.textContent = '⚠️';
+      text.textContent = isTimeout
+        ? 'XSD — Zeitüberschreitung · erneut versuchen ↻'
+        : 'XSD — nicht erreichbar · erneut versuchen ↻';
+      badge.onclick = retryValidation;
+      lastValidationResult = {
+        valid:false,
+        errors:[{message: isTimeout
+          ? 'Zeitüberschreitung — der Validierungsserver hat nicht rechtzeitig geantwortet. Klicke das Badge für einen neuen Versuch.'
+          : 'Validierungsserver nicht erreichbar: ' + e.message, level:'error'}]
+      };
+      return;
     }
-  } catch(e) {
-    clearTimeout(coldStartHint);
-    badge.className = 'val-badge invalid show';
-    document.getElementById('val-icon').textContent = '⚠️';
-    document.getElementById('val-text').textContent = 'XSD — Validator nicht erreichbar';
-    lastValidationResult = {valid:false, errors:[{message:e.message, level:'error'}]};
+  }
+}
+
+function retryValidation() {
+  if (lastValidationInput) {
+    validateXML(lastValidationInput.xml, lastValidationInput.filename);
   }
 }
 
@@ -1211,6 +1261,14 @@ function escHtml(s) {
 
 // Keyboard: Escape closes modal
 document.addEventListener('keydown', e => { if(e.key==='Escape') closeModal(); });
+
+// Server-Vorwärmung: beim Laden der Seite den Validator wecken,
+// damit er beim ersten echten Upload schon wach ist (Render Cold Start).
+(function warmupValidator() {
+  fetch(VALIDATOR_HEALTH, { method:'GET', mode:'cors' })
+    .then(() => console.log('Validator warm'))
+    .catch(() => { /* egal, läuft beim Upload eh nochmal */ });
+})();
 
 </script>
 </body>
